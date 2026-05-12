@@ -300,7 +300,7 @@ func buildCardJSON(markdownText string) map[string]any {
 		"card_init":      textNode("1"),
 		"ai_markdown":    textNode(markdownText),
 		"answer_summary": textNode(markdownText),
-		"status_info":    textNode(""),
+		"status_info":    textNode(" "),
 		"dc_print_end":   textNode("1"),
 	}
 	// return as object
@@ -320,9 +320,6 @@ func buildCardJSONStreaming(markdownText, statusInfo string) map[string]any {
 }
 
 func textNode(s string) map[string]string {
-	if s == "" {
-		return nil
-	}
 	return map[string]string{"type": "text", "content": s}
 }
 
