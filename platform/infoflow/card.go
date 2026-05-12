@@ -238,20 +238,10 @@ func (c *streamingCard) flush(ctx context.Context) {
 		return
 	}
 
-	// Split: history goes to thinking_aio (collapsed), latest goes to ai_markdown
-	var latestContent string
-	var historyContent string
-	if c.lastSentContent != "" && strings.HasPrefix(content, c.lastSentContent) {
-		historyContent = c.lastSentContent
-		latestContent = strings.TrimSpace(content[len(c.lastSentContent):])
-		if latestContent == "" {
-			latestContent = content // no diff, show full
-			historyContent = ""
-		}
-	} else {
-		latestContent = content
-	}
-	cardContent := buildCardJSONStreamingWithHistory(latestContent, historyContent, "处理中...")
+	// Split on last "---": show only the latest section in ai_markdown,
+	// everything before goes to thinking_aio (collapsed).
+	latest, history := splitForCard(content)
+	cardContent := buildCardJSONStreamingWithHistory(latest, history, "处理中...")
 	slog.Info("infoflow: card.flush sending update", "contentLen", len(content))
 	err := c.platform.updateStreamingCard(ctx, c, cardContent)
 
@@ -495,4 +485,16 @@ func buildCardJSONStreamingWithHistory(latestText, historyText, statusInfo strin
 		m["think_arrow_img"] = textNode("ast/arrow_down.png")
 	}
 	return m
+}
+
+// splitForCard splits content at the last "---" separator.
+// Returns (latest section, everything before).
+// If no separator, returns (full content, "").
+func splitForCard(content string) (latest, history string) {
+	sep := "\n\n---\n\n"
+	idx := strings.LastIndex(content, sep)
+	if idx < 0 {
+		return content, ""
+	}
+	return strings.TrimSpace(content[idx+len(sep):]), content[:idx]
 }
