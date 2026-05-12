@@ -145,7 +145,36 @@ func (c *streamingCard) Finalize(ctx context.Context, content string) error {
 	if err != nil {
 		return err
 	}
+
+	// AT the sender so they get notified
+	if c.userID != "" && c.isGroup {
+		c.platform.sendATNotify(ctx, c.groupID, c.userID)
+	}
 	return nil
+}
+
+// sendATNotify sends a short MD message that @-mentions the sender.
+func (p *Platform) sendATNotify(ctx context.Context, groupID int64, senderID string) {
+	ts := time.Now().UnixMilli()
+	atContent := fmt.Sprintf("@%s \u2705", senderID)
+	payload := map[string]any{
+		"message": map[string]any{
+			"header": map[string]any{
+				"toid":        groupID,
+				"totype":      "GROUP",
+				"msgtype":     "MD",
+				"clientmsgid": ts,
+				"role":        "robot",
+			},
+			"body": []map[string]any{
+				{"type": "MD", "content": atContent},
+			},
+		},
+	}
+	_, err := p.doPostWithResponse(ctx, "/robot/msg/groupmsgsend", payload)
+	if err != nil {
+		slog.Warn("infoflow: AT notify failed", "error", err, "senderID", senderID)
+	}
 }
 
 // Failed returns true if the card has entered a failed state.
