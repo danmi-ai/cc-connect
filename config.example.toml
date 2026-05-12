@@ -1693,3 +1693,35 @@ app_secret = "your-feishu-app-secret"
 #
 # [projects.platforms.options]
 # token = "your-discord-bot-token"
+
+# =============================================================================
+# Infoflow (如流 / Baidu IM) Platform
+# =============================================================================
+# 1. 创建机器人：https://qy.baidu-int.com → 应用中心 → 机器人 → 新建
+# 2. 开通权限：群聊消息收发 + 单聊消息收发
+# 3. 填入 app_key / app_secret / agent_id（即 appAgentId，数字）
+# 4. robot_im_id（可选）：机器人的如流 IM ID（数字），不填会自动查询
+#
+# Quick setup via CLI (coming soon):
+#   cc-connect infoflow setup --project <project_name>
+
+# [[projects]]
+# name = "my-infoflow-bot"
+#
+# [projects.agent]
+# type = "claudecode"
+#
+# [projects.agent.options]
+# work_dir = "/root/workspace"
+#
+# [[projects.platforms]]
+# type = "infoflow"
+#
+# [projects.platforms.options]
+# app_key    = "your-infoflow-app-key"
+# app_secret = "your-infoflow-app-secret"
+# agent_id   = 34562
+# robot_im_id = 4105003067   # optional, auto-fetched if omitted
+# allow_from = "user1,user2"   # comma-separated uuapNames; empty = allow all
+# share_session_in_channel = false  # true = whole group shares one session; false = per-user
+
