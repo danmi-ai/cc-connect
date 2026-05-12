@@ -795,6 +795,16 @@ func main() {
 		engines[i].SetHeartbeatScheduler(heartbeatSched)
 	}
 
+	// Start remote agent bridge (multi-agent WS server on :9900)
+	remoteBridge := core.NewRemoteAgentBridge(9900)
+	for _, e := range engines {
+		e.SetRemoteBridge(remoteBridge)
+		e.SetAgentBindings(core.NewAgentBindingManager())
+	}
+	if err := remoteBridge.Start(); err != nil {
+		slog.Error("remote agent bridge start failed", "error", err)
+	}
+
 	var startErrors []error
 	for _, e := range engines {
 		if err := e.Start(); err != nil {
@@ -1090,6 +1100,7 @@ func main() {
 	if bridgeSrv != nil {
 		bridgeSrv.Stop()
 	}
+	remoteBridge.Stop()
 	if webhookSrv != nil {
 		webhookSrv.Stop()
 	}
