@@ -1,16 +1,13 @@
 package infoflow
 
 import (
-	"bytes"
 	"context"
-	"crypto/md5"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chenhg5/cc-connect/core"
@@ -22,11 +19,11 @@ func init() {
 
 // replyContext holds enough info to reply or send a proactive message.
 type replyContext struct {
-	groupID   int64  // non-zero for group chat
-	userID    string // sender's uuapName
-	messageID string // original message ID (for quoting)
+	groupID   int64
+	userID    string
+	messageID string
 	isGroup   bool
-	proactive bool   // true when constructed by ReconstructReplyCtx (no incoming message)
+	proactive bool
 }
 
 // Platform implements core.Platform for Baidu Infoflow (如流).
@@ -41,20 +38,45 @@ type Platform struct {
 	wsGateway             string
 	wsConnectDomain       string
 
+	// Card/progress configuration
+	progressStyle   string // "legacy" | "compact" | "card"
+	reactionEmoji   string // emoji code for typing indicator, "" to disable
+	doneEmoji       string // emoji code for completion, "" to disable
+	cardThrottleMs   int    // minimum ms between card updates
+	cardDegradeUntil time.Time
+
 	handler     core.MessageHandler
 	mu          sync.Mutex
 	accessToken string
 	tokenExpiry time.Time
 
 	httpClient *http.Client
-	wsConn     *wsClient // WebSocket long-connection
+	wsConn     *wsClient
 	cancel     context.CancelFunc
 	dedup      *core.MessageDedup
+
+	// Card degradation state
+
+	// Message recall tracking
+	recalledMsgs     *sync.Map
+	recalledMsgsOnce sync.Once
+
+	// Unique message ID counter for clientmsgid
+	msgIDCounter atomic.Int64
+
+	// Per-session first-reply tracking for @-dedup
+	replyCounters sync.Map // sessionKey -> *atomic.Int32
 }
 
+// Compile-time interface checks.
+var (
+	_ core.Platform                    = (*Platform)(nil)
+	_ core.ReplyContextReconstructor   = (*Platform)(nil)
+	_ core.StreamingCardPlatform       = (*Platform)(nil)
+	_ core.FormattingInstructionProvider = (*Platform)(nil)
+)
+
 // New creates a new Infoflow platform from config options.
-// Required: app_key, app_secret, agent_id
-// Optional: robot_im_id, allow_from, base_url, ws_gateway, ws_connect_domain
 func New(opts map[string]any) (core.Platform, error) {
 	appKey, _ := opts["app_key"].(string)
 	appSecret, _ := opts["app_secret"].(string)
@@ -99,6 +121,29 @@ func New(opts map[string]any) (core.Platform, error) {
 		wsConnectDomain = "infoflow-open-gateway.weiyun.baidu.com:8869"
 	}
 
+	progressStyle, _ := opts["progress_style"].(string)
+	if progressStyle == "" {
+		progressStyle = "card"
+	}
+	reactionEmoji, _ := opts["reaction_emoji"].(string)
+	if reactionEmoji == "" {
+		reactionEmoji = "d18"
+	}
+	if reactionEmoji == "none" {
+		reactionEmoji = ""
+	}
+	doneEmoji, _ := opts["done_emoji"].(string)
+	if doneEmoji == "" {
+		doneEmoji = "d01"
+	}
+	if doneEmoji == "none" {
+		doneEmoji = ""
+	}
+	cardThrottleMs := 1500
+	if v, ok := opts["card_throttle_ms"].(float64); ok && v > 0 {
+		cardThrottleMs = int(v)
+	}
+
 	return &Platform{
 		appKey:                appKey,
 		appSecret:             appSecret,
@@ -109,6 +154,10 @@ func New(opts map[string]any) (core.Platform, error) {
 		baseURL:               baseURL,
 		wsGateway:             wsGateway,
 		wsConnectDomain:       wsConnectDomain,
+		progressStyle:         progressStyle,
+		reactionEmoji:         reactionEmoji,
+		doneEmoji:             doneEmoji,
+		cardThrottleMs:        cardThrottleMs,
 		httpClient:            &http.Client{Timeout: 30 * time.Second},
 		dedup:                 &core.MessageDedup{},
 	}, nil
@@ -116,98 +165,9 @@ func New(opts map[string]any) (core.Platform, error) {
 
 func (p *Platform) Name() string { return "infoflow" }
 
-// ─── Token Management ─────────────────────────────────────────────────────────
-
-func md5hex(s string) string {
-	return fmt.Sprintf("%x", md5.Sum([]byte(s)))
-}
-
-func (p *Platform) fetchToken(ctx context.Context) (string, error) {
-	body, _ := json.Marshal(map[string]string{
-		"app_key":    p.appKey,
-		"app_secret": md5hex(p.appSecret),
-	})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.baseURL+"/auth/app_access_token", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("infoflow: token request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Code string `json:"code"`
-		Data struct {
-			AppAccessToken string `json:"app_access_token"`
-			Expire         int    `json:"expire"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("infoflow: token decode failed: %w", err)
-	}
-	if result.Code != "ok" {
-		return "", fmt.Errorf("infoflow: token API returned code=%s", result.Code)
-	}
-	return result.Data.AppAccessToken, nil
-}
-
-func (p *Platform) getToken(ctx context.Context) (string, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.accessToken != "" && time.Now().Before(p.tokenExpiry) {
-		return p.accessToken, nil
-	}
-	token, err := p.fetchToken(ctx)
-	if err != nil {
-		return "", err
-	}
-	p.accessToken = token
-	p.tokenExpiry = time.Now().Add(110 * time.Minute) // expire slightly before actual 7200s
-	return token, nil
-}
-
-// ─── Robot Profile (fetch robotImID if not configured) ─────────────────────────
-
-func (p *Platform) fetchRobotImID(ctx context.Context) error {
-	if p.robotImID != 0 {
-		return nil
-	}
-	token, err := p.getToken(ctx)
-	if err != nil {
-		return err
-	}
-	body, _ := json.Marshal(map[string]any{})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.baseURL+"/imRobot/detail", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer-"+token)
-	req.Header.Set("X-LogId", fmt.Sprintf("%d", time.Now().UnixMilli()))
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("infoflow: robot detail request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Code string `json:"code"`
-		Data struct {
-			Data struct {
-				ImID int64 `json:"imId"`
-			} `json:"data"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("infoflow: robot detail decode failed: %w", err)
-	}
-	if result.Code != "ok" {
-		return fmt.Errorf("infoflow: robot detail returned code=%s", result.Code)
-	}
-	p.robotImID = result.Data.Data.ImID
-	slog.Info("infoflow: robot profile fetched", "robotImID", p.robotImID)
-	return nil
+// FormattingInstructions returns platform-specific formatting guidance for the agent.
+func (p *Platform) FormattingInstructions() string {
+	return `You are replying on Infoflow (如流). Use standard Markdown. Keep code blocks under 100 lines to avoid truncation. Use headings (##) to organize long responses.`
 }
 
 // ─── Start / Stop ─────────────────────────────────────────────────────────────
@@ -217,12 +177,14 @@ func (p *Platform) Start(handler core.MessageHandler) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
 
-	// Fetch robotImID so @ detection works
 	if err := p.fetchRobotImID(ctx); err != nil {
 		slog.Warn("infoflow: failed to fetch robot profile; @ detection may be impaired", "error", err)
 	}
 
-	// Start WebSocket long-connection loop with reconnect
+	// Initialize recall tracker with context-bound cleanup
+	p.initRecallTracker()
+	go p.recallCleanupLoop(ctx)
+
 	p.wsConn = newWSClient(p)
 	go p.wsConn.runLoop(ctx)
 
@@ -239,7 +201,6 @@ func (p *Platform) Stop() error {
 
 // ─── Message Dispatch ──────────────────────────────────────────────────────────
 
-// onIncomingMessage is called by wsClient for each valid inbound message.
 func (p *Platform) onIncomingMessage(raw map[string]any) {
 	eventType, _ := raw["eventtype"].(string)
 
@@ -248,7 +209,6 @@ func (p *Platform) onIncomingMessage(raw map[string]any) {
 
 	switch eventType {
 	case "MESSAGE_RECEIVE":
-		// Group @-message
 		groupID := toInt64(raw["groupid"])
 		message, _ := raw["message"].(map[string]any)
 		header, _ := message["header"].(map[string]any)
@@ -278,6 +238,8 @@ func (p *Platform) onIncomingMessage(raw map[string]any) {
 			isGroup:   true,
 		}
 		sessionKey := p.sessionKey(rctx)
+		// Reset reply counter for this session on new incoming message
+		p.resetReplyCounter(sessionKey)
 		msg = &core.Message{
 			Platform:   "infoflow",
 			SessionKey: sessionKey,
@@ -288,13 +250,12 @@ func (p *Platform) onIncomingMessage(raw map[string]any) {
 		}
 
 	default:
-		// Private (single chat) message
 		fromUserID, _ := raw["FromUserId"].(string)
 		msgID, _ := raw["MsgId"].(string)
 		msgType, _ := raw["MsgType"].(string)
 
 		if strings.ToLower(msgType) == "event" {
-			return // ignore subscribe/entry events
+			return
 		}
 		if !core.AllowList(p.allowFrom, fromUserID) {
 			return
@@ -310,6 +271,7 @@ func (p *Platform) onIncomingMessage(raw map[string]any) {
 			isGroup:   false,
 		}
 		sessionKey := p.sessionKey(rctx)
+		p.resetReplyCounter(sessionKey)
 		msg = &core.Message{
 			Platform:   "infoflow",
 			SessionKey: sessionKey,
@@ -339,7 +301,6 @@ func (p *Platform) sessionKey(rctx replyContext) string {
 	return fmt.Sprintf("dm:%s", rctx.userID)
 }
 
-// ReconstructReplyCtx lets cron/proactive sends work by parsing a session key.
 func (p *Platform) ReconstructReplyCtx(sessionKey string) (any, error) {
 	if strings.HasPrefix(sessionKey, "group:") {
 		parts := strings.SplitN(strings.TrimPrefix(sessionKey, "group:"), ":user:", 2)
@@ -348,7 +309,7 @@ func (p *Platform) ReconstructReplyCtx(sessionKey string) (any, error) {
 		if len(parts) == 2 {
 			userID = parts[1]
 		}
-		return replyContext{groupID: groupID, userID: userID, isGroup: true}, nil
+		return replyContext{groupID: groupID, userID: userID, isGroup: true, proactive: true}, nil
 	}
 	if strings.HasPrefix(sessionKey, "dm:") {
 		userID := strings.TrimPrefix(sessionKey, "dm:")
@@ -363,48 +324,58 @@ func (p *Platform) Reply(ctx context.Context, replyCtxAny any, content string) e
 	return p.Send(ctx, replyCtxAny, content)
 }
 
+const infoflowMaxMessageLen = 4000
+
 func (p *Platform) Send(ctx context.Context, replyCtxAny any, content string) error {
 	rctx, ok := replyCtxAny.(replyContext)
 	if !ok {
 		return fmt.Errorf("infoflow: unexpected reply context type %T", replyCtxAny)
 	}
-	token, err := p.getToken(ctx)
-	if err != nil {
-		return err
+	chunks := core.SplitMessageCodeFenceAware(content, infoflowMaxMessageLen)
+	for _, chunk := range chunks {
+		var err error
+		if rctx.isGroup {
+			err = p.sendToGroup(ctx, rctx, chunk)
+		} else {
+			err = p.sendToDM(ctx, rctx.userID, chunk)
+		}
+		if err != nil {
+			return err
+		}
 	}
-	if rctx.isGroup {
-		return p.sendToGroup(ctx, token, rctx.groupID, rctx.userID, content)
-	}
-	return p.sendToDM(ctx, token, rctx.userID, content)
+	return nil
 }
 
-// sendToGroup sends a Markdown message to a group, optionally @-mentioning the user.
-func (p *Platform) sendToGroup(ctx context.Context, token string, groupID int64, userID, content string) error {
-	// 如流群消息 API body 格式
+func (p *Platform) sendToGroup(ctx context.Context, rctx replyContext, content string) error {
+	atUserID := ""
+	sessionKey := p.sessionKey(rctx)
+	if p.isFirstReply(sessionKey) {
+		atUserID = rctx.userID
+	}
+
 	body := map[string]any{
 		"message": map[string]any{
 			"header": map[string]any{
-				"toid":         groupID,
-				"totype":       "GROUP",
-				"msgtype":      "MD",
-				"clientmsgid":  time.Now().UnixMilli(),
-				"role":         "robot",
+				"toid":        rctx.groupID,
+				"totype":      "GROUP",
+				"msgtype":     "MD",
+				"clientmsgid": p.nextMsgID(),
+				"role":        "robot",
 			},
-			"body": buildGroupMDBody(userID, content),
+			"body": buildGroupMDBody(atUserID, content),
 		},
 	}
-	return p.doPost(ctx, token, "/robot/msg/groupmsgsend", body)
+	return p.doPost(ctx, "/robot/msg/groupmsgsend", body)
 }
 
-// sendToDM sends a Markdown message to a single user.
-func (p *Platform) sendToDM(ctx context.Context, token string, userID, content string) error {
+func (p *Platform) sendToDM(ctx context.Context, userID, content string) error {
 	body := map[string]any{
 		"message": map[string]any{
 			"header": map[string]any{
 				"toid":        userID,
 				"totype":      "USER",
 				"msgtype":     "MD",
-				"clientmsgid": time.Now().UnixMilli(),
+				"clientmsgid": p.nextMsgID(),
 				"role":        "robot",
 			},
 			"body": []map[string]any{
@@ -412,7 +383,11 @@ func (p *Platform) sendToDM(ctx context.Context, token string, userID, content s
 			},
 		},
 	}
-	return p.doPost(ctx, token, "/robot/msg/singlemsgsend", body)
+	return p.doPost(ctx, "/robot/msg/singlemsgsend", body)
+}
+
+func (p *Platform) nextMsgID() int64 {
+	return time.Now().UnixMilli()*1000 + p.msgIDCounter.Add(1)%1000
 }
 
 func buildGroupMDBody(userID, content string) []map[string]any {
@@ -432,55 +407,26 @@ func buildGroupMDBody(userID, content string) []map[string]any {
 	return body
 }
 
-// ─── HTTP Helper ───────────────────────────────────────────────────────────────
+// ─── @-dedup (only first reply per turn mentions the user) ────────────────────
 
-func (p *Platform) doPost(ctx context.Context, token, path string, body any) error {
-	data, _ := json.Marshal(body)
-	slog.Info("infoflow: POST request", "path", path, "body_len", len(data), "body", string(data))
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+path, bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer-"+token)
-	req.Header.Set("X-LogId", fmt.Sprintf("%d", time.Now().UnixMilli()))
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("infoflow: POST %s failed: %w", path, err)
-	}
-	defer resp.Body.Close()
-
-	b, _ := io.ReadAll(resp.Body)
-	slog.Info("infoflow: POST response", "path", path, "status", resp.StatusCode, "body", string(b))
-
-	var result struct {
-		Code    any    `json:"code"`
-		Msg     string `json:"msg"`
-		ErrCode int    `json:"errcode"`
-		ErrMsg  string `json:"errmsg"`
-	}
-	if err := json.Unmarshal(b, &result); err != nil {
-		return fmt.Errorf("infoflow: POST %s response decode failed: %w", path, err)
-	}
-	// Check multiple error formats
-	if result.ErrCode != 0 {
-		return fmt.Errorf("infoflow: POST %s errcode=%d errmsg=%s", path, result.ErrCode, result.ErrMsg)
-	}
-	switch c := result.Code.(type) {
-	case string:
-		if c != "ok" && c != "" {
-			return fmt.Errorf("infoflow: POST %s code=%s msg=%s", path, c, result.Msg)
-		}
-	case float64:
-		if c != 0 {
-			return fmt.Errorf("infoflow: POST %s code=%v msg=%s", path, c, result.Msg)
-		}
-	}
-	return nil
+func (p *Platform) resetReplyCounter(sessionKey string) {
+	p.replyCounters.Store(sessionKey, &atomic.Int32{})
 }
+
+func (p *Platform) isFirstReply(sessionKey string) bool {
+	v, ok := p.replyCounters.Load(sessionKey)
+	if !ok {
+		return true
+	}
+	counter := v.(*atomic.Int32)
+	return counter.Add(1) == 1
+}
+
+// ─── Card degradation ─────────────────────────────────────────────────────────
 
 // ─── @ Detection ───────────────────────────────────────────────────────────────
 
 func (p *Platform) isBotMentioned(header map[string]any, body []any) bool {
-	// Check tolist (agentID as string)
 	if toList, ok := header["tolist"].([]any); ok {
 		agentIDStr := fmt.Sprintf("%d", p.agentID)
 		for _, v := range toList {
@@ -489,7 +435,6 @@ func (p *Platform) isBotMentioned(header map[string]any, body []any) bool {
 			}
 		}
 	}
-	// Check at.atrobotids
 	if at, ok := header["at"].(map[string]any); ok {
 		if robotIDs, ok := at["atrobotids"].([]any); ok {
 			for _, v := range robotIDs {
@@ -500,7 +445,6 @@ func (p *Platform) isBotMentioned(header map[string]any, body []any) bool {
 			}
 		}
 	}
-		// Check body AT blocks
 	if p.robotImID != 0 {
 		for _, block := range body {
 			b, _ := block.(map[string]any)
@@ -540,7 +484,6 @@ func extractPrivateText(raw map[string]any) string {
 }
 
 func removeBotMention(text string) string {
-	// Remove leading @botname patterns like "@my-bot " or "@机器人名 "
 	for strings.HasPrefix(text, "@") {
 		idx := strings.IndexByte(text, ' ')
 		if idx < 0 {
@@ -549,27 +492,4 @@ func removeBotMention(text string) string {
 		text = strings.TrimSpace(text[idx+1:])
 	}
 	return text
-}
-
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-func toInt64(v any) int64 {
-	switch n := v.(type) {
-	case float64:
-		return int64(n)
-	case int64:
-		return n
-	case int:
-		return int64(n)
-	case json.Number:
-		i, _ := n.Int64()
-		return i
-	}
-	return 0
-}
-
-func toInt64FromStr(s string) int64 {
-	var n int64
-	fmt.Sscanf(s, "%d", &n)
-	return n
 }

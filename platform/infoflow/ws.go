@@ -81,10 +81,14 @@ func (w *wsClient) connectAndServe(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
+	w.mu.Lock()
 	w.conn = conn
+	w.mu.Unlock()
 	defer func() {
+		w.mu.Lock()
 		conn.Close()
 		w.conn = nil
+		w.mu.Unlock()
 	}()
 
 	slog.Info("infoflow: WS connected", "connection_id", connID)
@@ -176,7 +180,11 @@ func (w *wsClient) handleFrame(frame *Frame) {
 		if err != nil || payload == nil {
 			return
 		}
-		w.p.onIncomingMessage(payload)
+		if isRecallEvent(payload) {
+			w.p.onRecallEvent(payload)
+		} else {
+			w.p.onIncomingMessage(payload)
+		}
 
 	case FrameMethodResponse:
 		// Response to our requests — currently unused
@@ -225,13 +233,12 @@ func (w *wsClient) sendHeartbeat() {
 
 func (w *wsClient) sendFrame(f *Frame) {
 	w.mu.Lock()
-	conn := w.conn
-	w.mu.Unlock()
-	if conn == nil {
+	defer w.mu.Unlock()
+	if w.conn == nil {
 		return
 	}
 	data := EncodeFrame(f)
-	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
+	if err := w.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 		slog.Warn("infoflow: send frame failed", "error", err)
 	}
 }
