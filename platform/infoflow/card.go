@@ -311,7 +311,7 @@ func buildCardJSON(markdownText string) map[string]any {
 		"think_status_img":                textNode("ast/thinking_yes.png"),
 		"think_status_color":              textNode("#5C6473"),
 		"think_status_text":               textNode("思考完成"),
-		"think_layout_install":            textNode("0"),
+		"think_layout_install":            textNode("1"),
 		"status_info_1_install":           textNode("0"),
 		"flex_item_status_info_1_install": textNode("0"),
 		"dc_print_end":                    textNode("1"),
@@ -329,7 +329,7 @@ func buildCardJSONStreaming(markdownText, statusInfo string) map[string]any {
 		"think_status_img":                textNode("ast/thinking_yes.png"),
 		"think_status_color":              textNode("#5C6473"),
 		"think_status_text":               textNode(statusInfo),
-		"think_layout_install":            textNode("0"),
+		"think_layout_install":            textNode("1"),
 		"status_info_1_install":           textNode("0"),
 		"flex_item_status_info_1_install": textNode("0"),
 	}
