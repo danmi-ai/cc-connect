@@ -89,9 +89,11 @@ func (p *Platform) CreateStreamingCard(ctx context.Context, replyCtxAny any) (co
 func (c *streamingCard) Update(ctx context.Context, content string) error {
 	c.mu.Lock()
 	if c.state == "finished" || c.state == "failed" {
+		slog.Debug("infoflow: card.Update skipped", "state", c.state, "contentLen", len(content))
 		c.mu.Unlock()
 		return nil
 	}
+	slog.Info("infoflow: card.Update called", "contentLen", len(content), "inFlight", c.inFlight)
 	c.pendingContent = content
 
 	// If nothing in flight and throttle window passed, send immediately
@@ -122,8 +124,10 @@ func (c *streamingCard) Update(ctx context.Context, content string) error {
 
 // Finalize sends the final content and marks the card as complete.
 func (c *streamingCard) Finalize(ctx context.Context, content string) error {
+	slog.Info("infoflow: card.Finalize called", "contentLen", len(content))
 	c.mu.Lock()
 	if c.state == "finished" || c.state == "failed" {
+		slog.Warn("infoflow: card.Finalize skipped", "state", c.state)
 		c.mu.Unlock()
 		return nil
 	}
@@ -137,7 +141,22 @@ func (c *streamingCard) Finalize(ctx context.Context, content string) error {
 
 	// Send final update
 	cardContent := buildCardJSON(content)
-	return c.platform.updateStreamingCard(ctx, c, cardContent)
+	err := c.platform.updateStreamingCard(ctx, c, cardContent)
+	if err != nil {
+		return err
+	}
+
+	// Notify the requester that the task is done.
+	if c.userID != "" && c.isGroup {
+		truncated := content
+		if len(truncated) > 200 {
+			truncated = truncated[:200] + "..."
+		}
+		notifyMsg := fmt.Sprintf("@%s \u2705 任务完成\n\n%s", c.userID, truncated)
+		notifyRctx := replyContext{groupID: c.groupID, isGroup: true}
+		_ = c.platform.sendToGroup(ctx, notifyRctx, notifyMsg)
+	}
+	return nil
 }
 
 // Failed returns true if the card has entered a failed state.
@@ -161,6 +180,7 @@ func (c *streamingCard) flush(ctx context.Context) {
 	}
 
 	cardContent := buildCardJSONStreaming(content, "处理中...")
+	slog.Info("infoflow: card.flush sending update", "contentLen", len(content))
 	err := c.platform.updateStreamingCard(ctx, c, cardContent)
 
 	c.mu.Lock()
@@ -294,7 +314,13 @@ func (p *Platform) updateStreamingCard(ctx context.Context, card *streamingCard,
 		path = streamingUpdatePersonalPath
 	}
 
-	_, err := p.doPostWithResponse(ctx, path, payload)
+	slog.Info("infoflow: updateStreamingCard", "path", path, "modifyToken", card.modifyToken[:10]+"...", "version", card.groupUpdateVersion)
+	respBody, err := p.doPostWithResponse(ctx, path, payload)
+	if err != nil {
+		slog.Error("infoflow: updateStreamingCard failed", "error", err)
+	} else {
+		slog.Info("infoflow: updateStreamingCard response", "body", string(respBody[:min(len(respBody), 200)]))
+	}
 	return err
 }
 

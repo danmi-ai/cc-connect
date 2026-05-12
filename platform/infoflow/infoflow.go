@@ -203,6 +203,7 @@ func (p *Platform) Stop() error {
 
 func (p *Platform) onIncomingMessage(raw map[string]any) {
 	eventType, _ := raw["eventtype"].(string)
+	slog.Info("infoflow: raw message received", "eventType", eventType, "keys", mapKeys(raw))
 
 	var msg *core.Message
 	var rctx replyContext
@@ -215,13 +216,22 @@ func (p *Platform) onIncomingMessage(raw map[string]any) {
 		body, _ := message["body"].([]any)
 
 		senderID, _ := header["fromuserid"].(string)
+		if senderID == "" {
+			// Bot-sent messages may not have fromuserid; use fromid as fallback
+			senderID = fmt.Sprintf("%v", raw["fromid"])
+		}
 		msgID, _ := header["messageid"].(string)
 
-		if !p.isBotMentioned(header, body) {
+		slog.Info("infoflow: MESSAGE_RECEIVE", "senderID", senderID, "msgID", msgID, "fromid", raw["fromid"], "targetAgentId", raw["targetAgentId"], "agentID", p.agentID)
+
+		if !p.isBotMentioned(header, body, raw) {
+			slog.Info("infoflow: not mentioned, skipping")
 			return
 		}
-		if !core.AllowList(p.allowFrom, senderID) {
-			slog.Debug("infoflow: message from unauthorized user", "user", senderID)
+		// allow_from check: skip for bot-originated messages (no fromuserid)
+		humanSender, _ := header["fromuserid"].(string)
+		if humanSender != "" && !core.AllowList(p.allowFrom, humanSender) {
+			slog.Debug("infoflow: message from unauthorized user", "user", humanSender)
 			return
 		}
 		if p.dedup.IsDuplicate(msgID) {
@@ -426,7 +436,11 @@ func (p *Platform) isFirstReply(sessionKey string) bool {
 
 // ─── @ Detection ───────────────────────────────────────────────────────────────
 
-func (p *Platform) isBotMentioned(header map[string]any, body []any) bool {
+func (p *Platform) isBotMentioned(header map[string]any, body []any, raw map[string]any) bool {
+	// Check targetAgentId (most reliable for bot-to-bot @)
+	if targetAgent := toInt64(raw["targetAgentId"]); targetAgent == p.agentID && targetAgent != 0 {
+		return true
+	}
 	if toList, ok := header["tolist"].([]any); ok {
 		agentIDStr := fmt.Sprintf("%d", p.agentID)
 		for _, v := range toList {
@@ -465,7 +479,7 @@ func extractGroupText(body []any) string {
 	for _, block := range body {
 		b, _ := block.(map[string]any)
 		switch strings.ToUpper(fmt.Sprintf("%v", b["type"])) {
-		case "TEXT":
+		case "TEXT", "MD":
 			if s, ok := b["content"].(string); ok {
 				parts = append(parts, s)
 			}
@@ -492,4 +506,12 @@ func removeBotMention(text string) string {
 		text = strings.TrimSpace(text[idx+1:])
 	}
 	return text
+}
+
+func mapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
