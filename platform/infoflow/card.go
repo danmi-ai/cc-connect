@@ -157,18 +157,19 @@ func (c *streamingCard) Finalize(ctx context.Context, content string) error {
 func (p *Platform) sendATNotify(ctx context.Context, groupID int64, senderID string) {
 	ts := time.Now().UnixMilli()
 	atID := p.resolveATID(senderID)
-	atContent := fmt.Sprintf("@%s \u2705", atID)
+	atIDInt := toInt64FromStr(atID)
 	payload := map[string]any{
 		"message": map[string]any{
 			"header": map[string]any{
 				"toid":        groupID,
 				"totype":      "GROUP",
-				"msgtype":     "MD",
+				"msgtype":     "TEXT",
 				"clientmsgid": ts,
 				"role":        "robot",
 			},
 			"body": []map[string]any{
-				{"type": "MD", "content": atContent},
+				{"type": "TEXT", "content": "\u2705"},
+				{"type": "AT", "atall": false, "atagentids": []int64{atIDInt}},
 			},
 		},
 	}
@@ -179,6 +180,31 @@ func (p *Platform) sendATNotify(ctx context.Context, groupID int64, senderID str
 		slog.Info("infoflow: AT notify sent", "senderID", senderID, "response", string(resp[:min(len(resp), 200)]))
 	}
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Failed returns true if the card has entered a failed state.
 func (c *streamingCard) Failed() bool {
