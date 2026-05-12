@@ -145,17 +145,6 @@ func (c *streamingCard) Finalize(ctx context.Context, content string) error {
 	if err != nil {
 		return err
 	}
-
-	// Notify the requester that the task is done.
-	if c.userID != "" && c.isGroup {
-		truncated := content
-		if len(truncated) > 200 {
-			truncated = truncated[:200] + "..."
-		}
-		notifyMsg := fmt.Sprintf("@%s \u2705 任务完成\n\n%s", c.userID, truncated)
-		notifyRctx := replyContext{groupID: c.groupID, isGroup: true}
-		_ = c.platform.sendToGroup(ctx, notifyRctx, notifyMsg)
-	}
 	return nil
 }
 

@@ -218,7 +218,7 @@ func (p *Platform) onIncomingMessage(raw map[string]any) {
 		senderID, _ := header["fromuserid"].(string)
 		if senderID == "" {
 			// Bot-sent messages may not have fromuserid; use fromid as fallback
-			senderID = fmt.Sprintf("%v", raw["fromid"])
+			senderID = fmt.Sprintf("%d", toInt64(raw["fromid"]))
 		}
 		msgID, _ := header["messageid"].(string)
 
