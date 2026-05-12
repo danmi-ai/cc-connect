@@ -48,6 +48,10 @@ type Platform struct {
 	// Bot ID mapping: robotImId -> agentId for AT notifications
 	botIDMap map[string]string
 
+	// Notify switches
+	notifyATBot   bool
+	notifyATHuman bool
+
 
 	handler     core.MessageHandler
 	mu          sync.Mutex
@@ -163,6 +167,8 @@ func New(opts map[string]any) (core.Platform, error) {
 		doneEmoji:             doneEmoji,
 		cardThrottleMs:        cardThrottleMs,
 		botIDMap:              parseBotIDMap(opts),
+		notifyATBot:   parseNotifyBool(opts, "at_bot", true),
+		notifyATHuman: parseNotifyBool(opts, "at_human", false),
 		httpClient:            &http.Client{Timeout: 30 * time.Second},
 		dedup:                 &core.MessageDedup{},
 	}, nil
@@ -539,4 +545,13 @@ func (p *Platform) resolveATID(senderID string) string {
 		return mapped
 	}
 	return senderID
+}
+
+func parseNotifyBool(opts map[string]any, key string, defaultVal bool) bool {
+	if notify, ok := opts["notify"].(map[string]any); ok {
+		if v, ok := notify[key].(bool); ok {
+			return v
+		}
+	}
+	return defaultVal
 }
