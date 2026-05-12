@@ -171,9 +171,11 @@ func (p *Platform) sendATNotify(ctx context.Context, groupID int64, senderID str
 			},
 		},
 	}
-	_, err := p.doPostWithResponse(ctx, "/robot/msg/groupmsgsend", payload)
+	resp, err := p.doPostWithResponse(ctx, "/robot/msg/groupmsgsend", payload)
 	if err != nil {
 		slog.Warn("infoflow: AT notify failed", "error", err, "senderID", senderID)
+	} else {
+		slog.Info("infoflow: AT notify sent", "senderID", senderID, "response", string(resp[:min(len(resp), 200)]))
 	}
 }
 

@@ -45,6 +45,9 @@ type Platform struct {
 	cardThrottleMs   int    // minimum ms between card updates
 	cardDegradeUntil time.Time
 
+	// Bot ID mapping: robotImId -> agentId for AT notifications
+	botIDMap map[string]string
+
 
 	handler     core.MessageHandler
 	mu          sync.Mutex
@@ -159,6 +162,7 @@ func New(opts map[string]any) (core.Platform, error) {
 		reactionEmoji:         reactionEmoji,
 		doneEmoji:             doneEmoji,
 		cardThrottleMs:        cardThrottleMs,
+		botIDMap:              parseBotIDMap(opts),
 		httpClient:            &http.Client{Timeout: 30 * time.Second},
 		dedup:                 &core.MessageDedup{},
 	}, nil
@@ -517,3 +521,22 @@ func mapKeys(m map[string]any) []string {
 	return keys
 }
 
+
+func parseBotIDMap(opts map[string]any) map[string]string {
+	m := make(map[string]string)
+	if raw, ok := opts["bot_id_map"].(map[string]any); ok {
+		for k, v := range raw {
+			m[k] = fmt.Sprintf("%d", toInt64(v))
+		}
+	}
+	return m
+}
+
+// resolveATID maps a senderID (which may be a robotImId) to the correct
+// agentId for AT purposes. Falls through to original ID if no mapping exists.
+func (p *Platform) resolveATID(senderID string) string {
+	if mapped, ok := p.botIDMap[senderID]; ok {
+		return mapped
+	}
+	return senderID
+}
