@@ -238,10 +238,9 @@ func (c *streamingCard) flush(ctx context.Context) {
 		return
 	}
 
-	// Split on last "---": show only the latest section in ai_markdown,
-	// everything before goes to thinking_aio (collapsed).
-	latest, history := splitForCard(content)
-	cardContent := buildCardJSONStreamingWithHistory(latest, history, "处理中...")
+	// ai_markdown = latest section (after last ---), thinking_aio = full content
+	latest, _ := splitForCard(content)
+	cardContent := buildCardJSONStreamingWithHistory(latest, content, "处理中...")
 	slog.Info("infoflow: card.flush sending update", "contentLen", len(content))
 	err := c.platform.updateStreamingCard(ctx, c, cardContent)
 
@@ -391,9 +390,9 @@ func (p *Platform) updateStreamingCard(ctx context.Context, card *streamingCard,
 // buildCardJSON constructs the contents payload for streaming_render template.
 func buildCardJSON(markdownText string) map[string]any {
 	// Split: if content has "---" separator, put everything before last "---" into thinking
-	var answerText, thinkingText string
+	var answerText, _  string
 	if idx := strings.LastIndex(markdownText, "\n\n---\n\n"); idx >= 0 {
-		thinkingText = markdownText[:idx]
+		_  = markdownText[:idx]
 		answerText = strings.TrimSpace(markdownText[idx+len("\n\n---\n\n"):])
 	} else {
 		answerText = markdownText
@@ -412,10 +411,9 @@ func buildCardJSON(markdownText string) map[string]any {
 		"flex_item_status_info_1_install": textNode("0"),
 		"dc_print_end":                    textNode("1"),
 	}
-	if thinkingText != "" {
-		m["thinking_aio"] = textNode(thinkingText)
-		m["think_arrow_img"] = textNode("ast/arrow_down.png")
-	}
+	// Full content in thinking (collapsible), only answer in main area
+	m["thinking_aio"] = textNode(markdownText)
+	m["think_arrow_img"] = textNode("ast/arrow_down.png")
 	return m
 }
 
