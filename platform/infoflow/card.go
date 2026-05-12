@@ -156,7 +156,8 @@ func (c *streamingCard) Finalize(ctx context.Context, content string) error {
 // sendATNotify sends a short MD message that @-mentions the sender.
 func (p *Platform) sendATNotify(ctx context.Context, groupID int64, senderID string) {
 	ts := time.Now().UnixMilli()
-	atContent := fmt.Sprintf("@%s \u2705", senderID)
+	atID := p.resolveATID(senderID)
+	atContent := fmt.Sprintf("@%s \u2705", atID)
 	payload := map[string]any{
 		"message": map[string]any{
 			"header": map[string]any{
