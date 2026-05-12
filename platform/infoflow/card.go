@@ -296,27 +296,37 @@ func (p *Platform) updateStreamingCard(ctx context.Context, card *streamingCard,
 
 // buildCardJSON constructs the contents payload for streaming_render template.
 func buildCardJSON(markdownText string) map[string]any {
-	content := map[string]any{
-		"card_init":      textNode("1"),
-		"ai_markdown":    textNode(markdownText),
-		"answer_summary": textNode(markdownText),
-		"status_info":    textNode(" "),
-		"dc_print_end":   textNode("1"),
+	return map[string]any{
+		"card_init":                       textNode("1"),
+		"ai_markdown":                     textNode(markdownText),
+		"answer_summary":                  textNode("思考完成"),
+		"status_info":                     textNode("思考完成"),
+		"think_star_img":                  textNode("ast/think_star_static.png"),
+		"think_status_img":                textNode("ast/thinking_yes.png"),
+		"think_status_color":              textNode("#5C6473"),
+		"think_status_text":               textNode("思考完成"),
+		"think_layout_install":            textNode("0"),
+		"status_info_1_install":           textNode("0"),
+		"flex_item_status_info_1_install": textNode("0"),
+		"dc_print_end":                    textNode("1"),
 	}
-	// return as object
-	return content
 }
 
 // buildCardJSONStreaming builds content for an in-progress card.
 func buildCardJSONStreaming(markdownText, statusInfo string) map[string]any {
-	content := map[string]any{
-		"card_init":      textNode("1"),
-		"ai_markdown":    textNode(markdownText),
-		"answer_summary": textNode(statusInfo),
-		"status_info":    textNode(statusInfo),
+	return map[string]any{
+		"card_init":                       textNode("1"),
+		"ai_markdown":                     textNode(markdownText),
+		"answer_summary":                  textNode(statusInfo),
+		"status_info":                     textNode(statusInfo),
+		"think_star_img":                  textNode("ast/think_star_static.png"),
+		"think_status_img":                textNode("ast/thinking_yes.png"),
+		"think_status_color":              textNode("#5C6473"),
+		"think_status_text":               textNode(statusInfo),
+		"think_layout_install":            textNode("0"),
+		"status_info_1_install":           textNode("0"),
+		"flex_item_status_info_1_install": textNode("0"),
 	}
-	// return as object
-	return content
 }
 
 func textNode(s string) map[string]string {
