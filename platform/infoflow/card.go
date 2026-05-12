@@ -178,7 +178,7 @@ func (c *streamingCard) flush(ctx context.Context) {
 
 // ─── API calls ─────────────────────────────────────────────────────────────────
 
-func (p *Platform) createStreamingCard(ctx context.Context, rctx replyContext, content string) (modifyToken, messageID string, err error) {
+func (p *Platform) createStreamingCard(ctx context.Context, rctx replyContext, content any) (modifyToken, messageID string, err error) {
 	timestamp := time.Now().UnixMilli()
 
 	var receiverID string
@@ -259,7 +259,7 @@ func (p *Platform) createStreamingCard(ctx context.Context, rctx replyContext, c
 	return modifyToken, messageID, nil
 }
 
-func (p *Platform) updateStreamingCard(ctx context.Context, card *streamingCard, content string) error {
+func (p *Platform) updateStreamingCard(ctx context.Context, card *streamingCard, content any) error {
 	var payload map[string]any
 	var path string
 
@@ -295,7 +295,7 @@ func (p *Platform) updateStreamingCard(ctx context.Context, card *streamingCard,
 // ─── Card content builder ──────────────────────────────────────────────────────
 
 // buildCardJSON constructs the contents payload for streaming_render template.
-func buildCardJSON(markdownText string) string {
+func buildCardJSON(markdownText string) map[string]any {
 	content := map[string]any{
 		"card_init":      textNode("1"),
 		"ai_markdown":    textNode(markdownText),
@@ -303,20 +303,20 @@ func buildCardJSON(markdownText string) string {
 		"status_info":    textNode(""),
 		"dc_print_end":   textNode("1"),
 	}
-	b, _ := json.Marshal(content)
-	return string(b)
+	// return as object
+	return content
 }
 
 // buildCardJSONStreaming builds content for an in-progress card.
-func buildCardJSONStreaming(markdownText, statusInfo string) string {
+func buildCardJSONStreaming(markdownText, statusInfo string) map[string]any {
 	content := map[string]any{
 		"card_init":      textNode("1"),
 		"ai_markdown":    textNode(markdownText),
 		"answer_summary": textNode(statusInfo),
 		"status_info":    textNode(statusInfo),
 	}
-	b, _ := json.Marshal(content)
-	return string(b)
+	// return as object
+	return content
 }
 
 func textNode(s string) map[string]string {
