@@ -219,41 +219,47 @@ func (p *Platform) createStreamingCard(ctx context.Context, rctx replyContext, c
 	}
 
 	// Parse response — extract modify_token and messageid
-	var result struct {
-		Code string `json:"code"`
-		Data struct {
-			Data struct {
-				ModifyToken string `json:"modify_token"`
-				MessageID   any    `json:"messageid"`
-				Receivers   []struct {
-					MsgID       any    `json:"msg_id"`
-					ModifyToken string `json:"modify_token"`
-				} `json:"receivers"`
-			} `json:"data"`
-			ModifyToken string `json:"modify_token"`
-			MessageID   any    `json:"messageid"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	// Parse response flexibly — receivers may be at data.receivers or data.data.receivers
+	var raw map[string]any
+	if err := json.Unmarshal(respBody, &raw); err != nil {
 		return "", "", fmt.Errorf("create card decode: %w", err)
 	}
 
-	// Extract modify_token (multiple possible locations)
-	modifyToken = result.Data.Data.ModifyToken
-	if modifyToken == "" {
-		modifyToken = result.Data.ModifyToken
+	// Walk into data, then optionally data.data
+	data, _ := raw["data"].(map[string]any)
+	if data == nil {
+		return "", "", fmt.Errorf("create card: no data in response")
 	}
-	if modifyToken == "" && len(result.Data.Data.Receivers) > 0 {
-		modifyToken = result.Data.Data.Receivers[0].ModifyToken
+	// Check for nested data.data
+	if inner, ok := data["data"].(map[string]any); ok {
+		data = inner
+	}
+
+	// Extract from receivers array
+	receivers, _ := data["receivers"].([]any)
+	if len(receivers) > 0 {
+		if r, ok := receivers[0].(map[string]any); ok {
+			if t, ok := r["modify_token"].(string); ok && t != "" {
+				modifyToken = t
+			}
+			if id := r["msg_id"]; id != nil {
+				messageID = fmt.Sprintf("%v", id)
+			}
+		}
+	}
+	// Fallback: top-level data fields
+	if modifyToken == "" {
+		if t, ok := data["modify_token"].(string); ok {
+			modifyToken = t
+		}
 	}
 	if modifyToken == "" {
 		return "", "", fmt.Errorf("create card: no modify_token in response: %s", string(respBody[:min(len(respBody), 500)]))
 	}
-
-	// Extract messageID
-	messageID = fmt.Sprintf("%v", result.Data.Data.MessageID)
 	if messageID == "" || messageID == "<nil>" {
-		messageID = fmt.Sprintf("%v", result.Data.MessageID)
+		if id := data["messageid"]; id != nil {
+			messageID = fmt.Sprintf("%v", id)
+		}
 	}
 
 	return modifyToken, messageID, nil
