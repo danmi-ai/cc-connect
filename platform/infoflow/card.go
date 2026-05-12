@@ -60,7 +60,7 @@ func (p *Platform) CreateStreamingCard(ctx context.Context, replyCtxAny any) (co
 	}
 
 	// Build initial card content
-	initialContent := buildCardJSON("⏳ 处理中...")
+	initialContent := buildCardJSONStreaming("", "⏳ 处理中...")
 
 	modifyToken, messageID, err := p.createStreamingCard(ctx, rctx, initialContent)
 	if err != nil {
@@ -160,7 +160,7 @@ func (c *streamingCard) flush(ctx context.Context) {
 		return
 	}
 
-	cardContent := buildCardJSON(content)
+	cardContent := buildCardJSONStreaming(content, "处理中...")
 	err := c.platform.updateStreamingCard(ctx, c, cardContent)
 
 	c.mu.Lock()
@@ -294,13 +294,36 @@ func (p *Platform) updateStreamingCard(ctx context.Context, card *streamingCard,
 
 // ─── Card content builder ──────────────────────────────────────────────────────
 
+// buildCardJSON constructs the contents payload for streaming_render template.
 func buildCardJSON(markdownText string) string {
-	// The streaming_render template expects a JSON with ai_markdown key
-	card := map[string]any{
-		"ai_markdown": markdownText,
+	content := map[string]any{
+		"card_init":      textNode("1"),
+		"ai_markdown":    textNode(markdownText),
+		"answer_summary": textNode(markdownText),
+		"status_info":    textNode(""),
+		"dc_print_end":   textNode("1"),
 	}
-	b, _ := json.Marshal(card)
+	b, _ := json.Marshal(content)
 	return string(b)
+}
+
+// buildCardJSONStreaming builds content for an in-progress card.
+func buildCardJSONStreaming(markdownText, statusInfo string) string {
+	content := map[string]any{
+		"card_init":      textNode("1"),
+		"ai_markdown":    textNode(markdownText),
+		"answer_summary": textNode(statusInfo),
+		"status_info":    textNode(statusInfo),
+	}
+	b, _ := json.Marshal(content)
+	return string(b)
+}
+
+func textNode(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	return map[string]string{"type": "text", "content": s}
 }
 
 // ─── Degradation ───────────────────────────────────────────────────────────────
