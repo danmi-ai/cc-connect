@@ -268,6 +268,10 @@ type Engine struct {
 	// /web command callbacks
 	webSetupFunc  func() (port int, token string, needRestart bool, err error)
 	webStatusFunc func() (url string)
+
+	// Remote agent bridge (multi-agent)
+	remoteBridge  *RemoteAgentBridge
+	agentBindings *AgentBindingManager
 }
 
 // workspaceInitFlow tracks a channel that is being onboarded to a workspace.
@@ -4637,6 +4641,7 @@ var builtinCommands = []struct {
 	{[]string{"web"}, "web"},
 	{[]string{"diff"}, "diff"},
 	{[]string{"ps", "btw"}, "ps"},
+	{[]string{"agent"}, "agent"},
 }
 
 func (e *Engine) cmdPs(p Platform, msg *Message, args []string) {
@@ -4852,6 +4857,8 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		e.cmdWeb(p, msg, args)
 	case "ps":
 		e.cmdPs(p, msg, args)
+	case "agent":
+		e.cmdAgent(p, msg, args)
 	default:
 		if custom, ok := e.commands.Resolve(cmd); ok {
 			if disabledCmds[strings.ToLower(custom.Name)] {
