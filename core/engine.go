@@ -2053,6 +2053,13 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		interactiveKey = resolvedWorkspace + ":" + msg.SessionKey
 	}
 
+	// Remote agent binding override (multi-agent bridge)
+	if boundName := e.GetBoundAgent(msg.SessionKey); boundName != "" && e.remoteBridge != nil {
+		if ra := e.resolveRemoteAgent(boundName); ra != nil {
+			agent = ra
+		}
+	}
+
 	session := sessions.GetOrCreateActive(msg.SessionKey)
 	sessions.UpdateUserMeta(msg.SessionKey, msg.UserName, msg.ChatName)
 	if !session.TryLock() {

@@ -65,6 +65,16 @@ func (e *Engine) GetBoundAgent(sessionKey string) string {
 	return e.agentBindings.Get(sessionKey)
 }
 
+// resolveRemoteAgent looks up a remote agent by its binding name (e.g. "remote:myagent").
+func (e *Engine) resolveRemoteAgent(boundName string) Agent {
+	nodeName := strings.TrimPrefix(boundName, "remote:")
+	node := e.remoteBridge.GetNode(nodeName)
+	if node == nil || !node.isAlive() {
+		return nil
+	}
+	return NewRemoteAgent(e.remoteBridge, nodeName)
+}
+
 // cmdAgent handles /agent [list|<name>|unbind]
 func (e *Engine) cmdAgent(p Platform, msg *Message, args []string) {
 	if e.remoteBridge == nil {
