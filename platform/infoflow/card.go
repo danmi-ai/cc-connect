@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"strings"
+
 	"github.com/chenhg5/cc-connect/core"
 )
 
@@ -236,7 +238,20 @@ func (c *streamingCard) flush(ctx context.Context) {
 		return
 	}
 
-	cardContent := buildCardJSONStreaming(content, "处理中...")
+	// Split: history goes to thinking_aio (collapsed), latest goes to ai_markdown
+	var latestContent string
+	var historyContent string
+	if c.lastSentContent != "" && strings.HasPrefix(content, c.lastSentContent) {
+		historyContent = c.lastSentContent
+		latestContent = strings.TrimSpace(content[len(c.lastSentContent):])
+		if latestContent == "" {
+			latestContent = content // no diff, show full
+			historyContent = ""
+		}
+	} else {
+		latestContent = content
+	}
+	cardContent := buildCardJSONStreamingWithHistory(latestContent, historyContent, "处理中...")
 	slog.Info("infoflow: card.flush sending update", "contentLen", len(content))
 	err := c.platform.updateStreamingCard(ctx, c, cardContent)
 
@@ -385,9 +400,17 @@ func (p *Platform) updateStreamingCard(ctx context.Context, card *streamingCard,
 
 // buildCardJSON constructs the contents payload for streaming_render template.
 func buildCardJSON(markdownText string) map[string]any {
-	return map[string]any{
+	// Split: if content has "---" separator, put everything before last "---" into thinking
+	var answerText, thinkingText string
+	if idx := strings.LastIndex(markdownText, "\n\n---\n\n"); idx >= 0 {
+		thinkingText = markdownText[:idx]
+		answerText = strings.TrimSpace(markdownText[idx+len("\n\n---\n\n"):])
+	} else {
+		answerText = markdownText
+	}
+	m := map[string]any{
 		"card_init":                       textNode("1"),
-		"ai_markdown":                     textNode(markdownText),
+		"ai_markdown":                     textNode(answerText),
 		"answer_summary":                  textNode("思考完成"),
 		"status_info":                     textNode("思考完成"),
 		"think_star_img":                  textNode("ast/think_star_static.png"),
@@ -399,6 +422,11 @@ func buildCardJSON(markdownText string) map[string]any {
 		"flex_item_status_info_1_install": textNode("0"),
 		"dc_print_end":                    textNode("1"),
 	}
+	if thinkingText != "" {
+		m["thinking_aio"] = textNode(thinkingText)
+		m["think_arrow_img"] = textNode("ast/arrow_down.png")
+	}
+	return m
 }
 
 // buildCardJSONStreaming builds content for an in-progress card.
@@ -446,3 +474,25 @@ func min(a, b int) int {
 
 // sendNotifyAT sends a short group message that @-mentions a bot.
 // Uses AT body block with robotid + @agentId in text content.
+
+// buildCardJSONStreamingWithHistory puts latest content in ai_markdown and history in thinking_aio.
+func buildCardJSONStreamingWithHistory(latestText, historyText, statusInfo string) map[string]any {
+	m := map[string]any{
+		"card_init":                       textNode("1"),
+		"ai_markdown":                     textNode(latestText),
+		"answer_summary":                  textNode(statusInfo),
+		"status_info":                     textNode(statusInfo),
+		"think_star_img":                  textNode("ast/think_star_static.png"),
+		"think_status_img":                textNode("ast/thinking_yes.png"),
+		"think_status_color":              textNode("#5C6473"),
+		"think_status_text":               textNode(statusInfo),
+		"think_layout_install":            textNode("1"),
+		"status_info_1_install":           textNode("0"),
+		"flex_item_status_info_1_install": textNode("0"),
+	}
+	if historyText != "" {
+		m["thinking_aio"] = textNode(historyText)
+		m["think_arrow_img"] = textNode("ast/arrow_down.png")
+	}
+	return m
+}
