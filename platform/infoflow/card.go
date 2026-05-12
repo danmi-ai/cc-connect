@@ -16,9 +16,9 @@ var _ core.StreamingCard = (*streamingCard)(nil)
 
 // Streaming card API constants (from openclaw-infoflow-plugin).
 const (
-	streamingCreatePath        = "/api/v1/msg/sender/interactivity_msg"
-	streamingUpdateGroupPath   = "/api/v1/msg/modifier/dynamic_content"
-	streamingUpdatePersonalPath = "/api/v1/msg/modifier/interactivity_personal_msg_content"
+	streamingCreatePath        = "/msg/sender/interactivity_msg"
+	streamingUpdateGroupPath   = "/msg/modifier/dynamic_content"
+	streamingUpdatePersonalPath = "/msg/modifier/interactivity_personal_msg_content"
 	streamingTemplateName      = "streaming_render"
 	streamingTemplateVersion   = 30
 	streamingGroupVersionStart = 111
