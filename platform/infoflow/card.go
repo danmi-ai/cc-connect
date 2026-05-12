@@ -145,10 +145,6 @@ func (c *streamingCard) Finalize(ctx context.Context, content string) error {
 	if err != nil {
 		return err
 	}
-	// Notify configured bot (e.g. 丹秘) that task is done
-	if c.platform.notifyAgentID != 0 && c.isGroup {
-		c.platform.sendNotifyAT(ctx, c.groupID, c.platform.notifyAgentID, c.platform.notifyRobotImID)
-	}
 	return nil
 }
 
@@ -382,28 +378,3 @@ func min(a, b int) int {
 
 // sendNotifyAT sends a short group message that @-mentions a bot.
 // Uses AT body block with robotid + @agentId in text content.
-func (p *Platform) sendNotifyAT(ctx context.Context, groupID, agentID, robotImID int64) {
-	ts := time.Now().UnixMilli()
-	body := []map[string]any{
-		{"type": "AT", "robotid": robotImID},
-		{"type": "TEXT", "content": fmt.Sprintf(" @%d ✅", agentID)},
-	}
-	payload := map[string]any{
-		"message": map[string]any{
-			"header": map[string]any{
-				"toid":        groupID,
-				"totype":      "GROUP",
-				"msgtype":     "TEXT",
-				"clientmsgid": ts,
-				"role":        "robot",
-			},
-			"body": body,
-		},
-	}
-	respBody, err := p.doPostWithResponse(ctx, "/robot/msg/groupmsgsend", payload)
-	if err != nil {
-		slog.Warn("infoflow: notify AT send failed", "error", err)
-	} else {
-		slog.Info("infoflow: notify AT sent", "response", string(respBody[:min(len(respBody), 200)]))
-	}
-}

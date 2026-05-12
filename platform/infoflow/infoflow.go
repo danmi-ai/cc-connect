@@ -45,9 +45,6 @@ type Platform struct {
 	cardThrottleMs   int    // minimum ms between card updates
 	cardDegradeUntil time.Time
 
-	// Notify config: AT this bot when task completes
-	notifyAgentID   int64
-	notifyRobotImID int64
 
 	handler     core.MessageHandler
 	mu          sync.Mutex
@@ -162,8 +159,6 @@ func New(opts map[string]any) (core.Platform, error) {
 		reactionEmoji:         reactionEmoji,
 		doneEmoji:             doneEmoji,
 		cardThrottleMs:        cardThrottleMs,
-		notifyAgentID:   parseNotifyInt64(opts, "notify", "agent_id"),
-		notifyRobotImID: parseNotifyInt64(opts, "notify", "robot_im_id"),
 		httpClient:            &http.Client{Timeout: 30 * time.Second},
 		dedup:                 &core.MessageDedup{},
 	}, nil
@@ -522,9 +517,3 @@ func mapKeys(m map[string]any) []string {
 	return keys
 }
 
-func parseNotifyInt64(opts map[string]any, section, key string) int64 {
-	if notify, ok := opts[section].(map[string]any); ok {
-		return toInt64(notify[key])
-	}
-	return 0
-}
