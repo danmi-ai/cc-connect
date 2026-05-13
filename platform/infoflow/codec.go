@@ -211,6 +211,9 @@ func decodeHeader(data []byte) (Header, error) {
 				return h, err
 			}
 			pos = p2
+			if pos+length > len(data) {
+				return h, fmt.Errorf("header field %d length %d exceeds buffer", fieldNumber, length)
+			}
 			s := string(data[pos : pos+length])
 			pos += length
 			switch fieldNumber {
