@@ -24,7 +24,11 @@ func TestStreamingCardLifecycle(t *testing.T) {
 			createCount.Add(1)
 			json.NewEncoder(w).Encode(map[string]any{
 				"code": "ok",
-				"data": map[string]any{"message_id": "msg-123"},
+				"data": map[string]any{
+					"receivers": []map[string]any{
+						{"modify_token": "tok-abc123", "msg_id": "msg-123"},
+					},
+				},
 			})
 		case r.URL.Path == "/api/v1/msg/modifier/dynamic_content":
 			updateCount.Add(1)
@@ -138,17 +142,19 @@ func TestStreamingCardFinalizeSendsLastContent(t *testing.T) {
 		case r.URL.Path == "/api/v1/msg/sender/interactivity_msg":
 			json.NewEncoder(w).Encode(map[string]any{
 				"code": "ok",
-				"data": map[string]any{"message_id": "msg-456"},
+				"data": map[string]any{
+					"receivers": []map[string]any{
+						{"modify_token": "tok-abc456", "msg_id": "msg-456"},
+					},
+				},
 			})
 		case r.URL.Path == "/api/v1/msg/modifier/dynamic_content":
 			updateCalls.Add(1)
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
-			if content, ok := body["content"].(map[string]any); ok {
-				if elems, ok := content["elements"].([]any); ok && len(elems) > 0 {
-					if elem, ok := elems[0].(map[string]any); ok {
-						lastContent, _ = elem["content"].(string)
-					}
+			if dmc, ok := body["new_dynamic_msg_content"].(map[string]any); ok {
+				if md, ok := dmc["ai_markdown"].(map[string]any); ok {
+					lastContent, _ = md["content"].(string)
 				}
 			}
 			json.NewEncoder(w).Encode(map[string]any{"code": "ok"})
