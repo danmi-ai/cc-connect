@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -281,5 +282,104 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(0)
 	default:
 		os.Exit(2)
+	}
+}
+
+func TestFinishReadLoop_ExitNoStderr(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cs := &claudeSession{
+		events: make(chan core.Event, 8),
+		ctx:    ctx,
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+	cs.alive.Store(true)
+
+	// Simulate a process that exits 1 with no stderr
+	cmd := exec.CommandContext(ctx, "false")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitErrCh := make(chan error, 1)
+	go func() { waitErrCh <- cmd.Wait() }()
+
+	// stderrBuf is empty
+	var stderrBuf bytes.Buffer
+	cs.finishReadLoop(waitErrCh, &stderrBuf)
+
+	// events should be closed now, read all
+	var got *core.Event
+	for evt := range cs.events {
+		got = &evt
+	}
+	if got == nil {
+		t.Fatal("expected an EventError, got none")
+	}
+	if got.Type != core.EventError {
+		t.Fatalf("expected EventError, got %v", got.Type)
+	}
+	errMsg := got.Error.Error()
+	if !strings.Contains(errMsg, "claude exited") {
+		t.Errorf("error should contain 'claude exited', got: %s", errMsg)
+	}
+	if !strings.Contains(errMsg, "(no stderr)") {
+		t.Errorf("error should contain '(no stderr)', got: %s", errMsg)
+	}
+}
+
+func TestFinishReadLoop_ExitWithStderr(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cs := &claudeSession{
+		events: make(chan core.Event, 8),
+		ctx:    ctx,
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+	cs.alive.Store(true)
+
+	cmd := exec.CommandContext(ctx, "false")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitErrCh := make(chan error, 1)
+	go func() { waitErrCh <- cmd.Wait() }()
+
+	var stderrBuf bytes.Buffer
+	stderrBuf.WriteString("something went wrong\n")
+	cs.finishReadLoop(waitErrCh, &stderrBuf)
+
+	var got *core.Event
+	for evt := range cs.events {
+		got = &evt
+	}
+	if got == nil {
+		t.Fatal("expected an EventError, got none")
+	}
+	errMsg := got.Error.Error()
+	if !strings.Contains(errMsg, "stderr: something went wrong") {
+		t.Errorf("error should contain stderr content, got: %s", errMsg)
+	}
+}
+
+func TestTailTruncate(t *testing.T) {
+	tests := []struct {
+		input  string
+		maxLen int
+		want   string
+	}{
+		{"short", 10, "short"},
+		{"exactly10!", 10, "exactly10!"},
+		{"hello world this is long", 10, "...is is long"},
+		{"", 5, ""},
+	}
+	for _, tt := range tests {
+		got := tailTruncate(tt.input, tt.maxLen)
+		if got != tt.want {
+			t.Errorf("tailTruncate(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
+		}
 	}
 }

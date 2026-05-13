@@ -266,16 +266,17 @@ func (cs *claudeSession) finishReadLoop(waitErrCh <-chan error, stderrBuf *bytes
 		if stderrBuf != nil {
 			stderrMsg = strings.TrimSpace(stderrBuf.String())
 		}
+		slog.Error("claudeSession: process failed", "error", err, "stderr", tailTruncate(stderrMsg, 800))
+		var evtErr error
 		if stderrMsg != "" {
-			slog.Error("claudeSession: process failed", "error", err, "stderr", stderrMsg)
-			evt := core.Event{Type: core.EventError, Error: fmt.Errorf("%s", stderrMsg)}
-			select {
-			case cs.events <- evt:
-			case <-cs.ctx.Done():
-				// INVARIANT: readLoop must close cs.events and cs.done exactly once
-				// on every termination path. Callers (engine event loop) rely on
-				// these closures to observe session end.
-			}
+			evtErr = fmt.Errorf("claude exited: %v; stderr: %s", err, tailTruncate(stderrMsg, 800))
+		} else {
+			evtErr = fmt.Errorf("claude exited: %v (no stderr)", err)
+		}
+		evt := core.Event{Type: core.EventError, Error: evtErr}
+		select {
+		case cs.events <- evt:
+		case <-cs.ctx.Done():
 		}
 	}
 	close(cs.events)
@@ -295,7 +296,7 @@ func (cs *claudeSession) handleReadLoopScanErr(err error, waitDone <-chan struct
 	default:
 	}
 
-	slog.Error("claudeSession: scanner error", "error", err)
+	slog.Error("claudeSession: scanner error", "error", tailTruncate(err.Error(), 800))
 	evt := core.Event{Type: core.EventError, Error: fmt.Errorf("read stdout: %w", err)}
 	select {
 	case cs.events <- evt:
@@ -780,4 +781,11 @@ func filterEnv(env []string, key string) []string {
 		}
 	}
 	return out
+}
+
+func tailTruncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return "..." + s[len(s)-maxLen:]
 }
