@@ -293,9 +293,6 @@ func (d *Daemon) handleTask(task *TaskPayload) {
 		"--print",
 		"--output-format", "text",
 	}
-	if d.workDir != "" && d.workDir != "." {
-		args = append(args, "--cwd", d.workDir)
-	}
 	args = append(args, task.Prompt)
 
 	ctx, cancel := context.WithTimeout(d.ctx, 10*time.Minute)

@@ -2,6 +2,7 @@
 # Binary outputs
 # ============================================================================
 /cc-connect
+/agent-daemon
 cc-connect.bak-*
 *.exe
 *.exe~
